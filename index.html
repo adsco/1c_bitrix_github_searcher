@@ -1,0 +1,344 @@
+<!DOCTTYPE html>
+<html>
+  <head>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>1C Bitrix test task with source</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <style id="compiled-css" type="text/css">
+      body, ul {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #f5f4f4;
+}
+
+html, body {
+  height: 100%;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.search-bar {
+  border-bottom: 1px solid #f1f0f0;
+}
+
+.search-wrapper {
+  padding: 10px 50px;
+  
+}
+
+.search {
+  width: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.result-title-wrapper {
+  padding: 10px 50px 20px;
+  margin-top: 50px;
+  background: #ffffff;
+}
+
+.result-title {
+  border-bottom: 1px solid #dddddd;
+}
+
+.result-bar {
+  padding: 10px 50px 0;
+  background: #ffffff;
+  height: 100%;
+  flex-grow: 1;
+  overflow-y: scroll;
+}
+
+.result-list-container {
+  list-style: none;
+}
+
+.result-item {
+  display: flex;
+  border-bottom: 1px solid #dddddd;
+  padding: 10px 0 15px;
+}
+
+.avatar-wrapper {
+  
+}
+
+.avatar {
+  width: 30px;
+  height: 30px;
+}
+
+.repository-wrapper {
+  padding: 0 10px;
+  flex-grow: 1;
+}
+
+.repository-title {
+  font-weight: bold;
+}
+
+.repository-description {
+  
+}
+
+.rating-wrapper {
+  display: flex;
+}
+
+.github-star {
+  width: 16px;
+  height: 16px;
+}
+  </style>
+  </head>
+  <body>
+    <div class="root">
+      <div class="search-bar">
+        <div class="search-wrapper">
+          <input id="search" class="search" type="text" placeholder="Search..." />
+        </div>
+      </div>
+      <div class="result-title-wrapper">
+        <div class="result-title">Results</div>  
+      </div>
+      <div class="result-bar" id="result-bar">
+        <ul class="result-list-container" id="result-list-container">
+
+        </ul>
+      </div>
+    </div>
+
+    <svg aria-label="star" id="github-star" style="position: absolute; width: 0px; height: 0px;" viewBox="0 0 14 16" version="1.1" width="14" role="img"><path fill-rule="evenodd" d="M14 6l-4.9-.64L7 1 4.9 5.36 0 6l3.6 3.26L2.67 14 7 11.67 11.33 14l-.93-4.74L14 6z"></path></svg>
+    <script>
+      window.onload = function() {
+        const endpoint = 'https://api.github.com';
+
+        class GithubApi {
+          constructor() {
+            this.searchUrl = '/search/repositories';
+            this.defaultParams = [
+              {name: 'sort', value: 'stars'},
+              {name: 'order', value: 'desc'}
+            ];
+          }
+
+          getRepositories(searchString, page) {
+            const params = [
+              ...this.defaultParams,
+              {name: 'q', value: searchString},
+              {name: 'page', value: page && page > 0 ? page : 1}
+            ];
+
+            return this.makeRequest(`${endpoint}${this.searchUrl}`, params);
+          }
+
+          makeRequest(url, params) {
+            const request = new XMLHttpRequest();
+
+            request.open('GET', this.buildUrl(url, params));
+            request.responseType = 'json';
+
+            request.send();
+
+            return new Promise((resolve, reject) => {
+              request.onreadystatechange = () => {
+                if (request.readyState === 4) {
+                  if (request.status === 200) {
+                    console.log('resolve');
+                    return resolve(request.response);
+                  }
+
+                  return reject();
+                }
+              }
+            });
+          }
+
+          buildUrl(url, params) {
+            const paramsString = params.reduce((acc, param) => `${acc}&${param.name}=${param.value}`, '').substr(1);
+
+            return `${url}?${paramsString}`;
+          }
+        }
+
+        class GithubResponse {
+          constructor(githubJsonResponse) {
+            this.repositories = githubJsonResponse.items.map((item) => ({
+              avatarUrl: item.owner.avatar_url,
+              title: item.full_name,
+              description: item.description,
+              rating: item.stargazers_count
+            }));
+          }
+        }
+
+        class Github {
+          constructor(githubApi) {
+            this.githubApi = githubApi;
+          }
+
+          searchRepositories(searchString, page) {
+            return this.githubApi.getRepositories(searchString, page).then((response) => new GithubResponse(response));
+          }
+        }
+
+        class App {
+          constructor(github, storage) {
+            this.github = github;
+            this.storage = storage;
+            this.search = document.getElementById('search');
+            this.resultsContainer = document.getElementById('result-bar');
+            this.resultsTargetContainer = document.getElementById('result-list-container');
+            this.githubResultTemplate = `
+                <div class="avatar-wrapper">
+                  <img class="avatar" src="{{avatarUrl}}" />
+                </div>
+                <div class="repository-wrapper">
+                  <div class="repository-title">
+                    {{title}}
+                  </div>
+                  <div class="repository-description">
+                    {{description}}
+                  </div>
+                </div>
+                <div class="rating-wrapper">
+
+                <svg class="github-star">
+                  <use xlink:href="#github-star"/>
+                </svg>
+                  {{rating}}
+                </div>`;
+              this.storageKey = 'JSFIDDLE_SEARCH_LAST_RESULTS';
+              this.searchDebounceTime = 500;
+              this.searchMinChars = 3;
+              this.currentPage = 1;
+              this.lastSearchString = '';
+              this.results = [];
+          }
+
+          run() {
+            this.search.addEventListener('input', (event) => this.startSearch(this.search.value));
+
+            this.resultsContainer.addEventListener('scroll', () => {
+              if (this.resultsContainer.scrollTop + this.resultsContainer.clientHeight >= this.resultsContainer.scrollHeight) {
+                this.loadMoreResults();
+              }
+            });
+
+            this.restoreLastState();
+          }
+
+          restoreLastState() {
+            const snapshot = JSON.parse(this.storage.getItem(this.storageKey));
+
+            if (!snapshot) {
+              return;
+            }
+
+            this.search.value = snapshot.searchString;
+            this.lastSearchString = snapshot.searchString;
+            this.currentPage = snapshot.page;
+            this.results = snapshot.repositories;
+            this.updateSearchResults(snapshot.repositories, true);
+          }
+
+          startSearch(rawSearchString) {
+            this.currentPage = 1;
+
+            if (this.searchTimeoutId) {
+              clearTimeout(this.searchTimeoutId);
+              this.searchTimeoutId = null;
+            }
+
+            this.searchTimeoutId = setTimeout(() => {
+              const searchString = rawSearchString.trim();
+
+              if (searchString.length < this.searchMinChars) {
+                return;
+              }
+
+              return this.makeSearch(searchString)
+                .then((githubResponse) => {
+                  this.saveResults(searchString, this.currentPage, githubResponse.repositories, true);
+                  this.updateSearchResults(githubResponse.repositories, true);
+                });
+            }, this.searchDebounceTime);
+          }
+
+          makeSearch(searchString, page = 1) {
+            this.lastSearchString = searchString;
+
+            return this.github.searchRepositories(searchString, page);
+          }
+
+          loadMoreResults() {    
+            this.makeSearch(this.lastSearchString, this.currentPage + 1)
+              .then((githubResponse) => {
+                this.currentPage++;
+                this.saveResults(this.lastSearchString, this.currentPage, githubResponse.repositories, false);
+                this.updateSearchResults(githubResponse.repositories, false);
+              });
+          }
+
+          updateSearchResults(repositories, clearExisting) {
+            if (clearExisting) {
+              this.resultsTargetContainer.innerHTML = '';
+            }
+
+            repositories.forEach(({avatarUrl, title, description, rating}) => this.resultsTargetContainer
+              .appendChild(
+                this.createResultItemNode(avatarUrl, title, description, rating)
+              )
+            );
+          }
+
+          createResultItemNode(avatarUrl, title, description, rating) {
+            const item = document.createElement('li');
+
+            item.classList.add('result-item');
+
+            item.innerHTML = this.githubResultTemplate
+              .replace('{{avatarUrl}}', avatarUrl)
+              .replace('{{title}}', title)
+              .replace('{{description}}', description)
+              .replace('{{rating}}', this.formatNumber(rating));
+
+              return item;
+          }
+
+          saveResults(searchString, page, repositories, deleteExisting) {
+            if (deleteExisting) {
+              this.results = [];
+            }
+
+            this.results = [...this.results, ...repositories];
+
+            this.storage.setItem(this.storageKey, JSON.stringify({page: page, searchString, repositories: this.results}));
+          }
+
+          formatNumber(numberToFormat) {
+            if (numberToFormat / 1000 >= 1) {
+              return Math.floor(numberToFormat / 1000) + 'k';
+            }
+
+            return numberToFormat;
+          }
+        }
+
+        const github = new Github(new GithubApi());
+        const app = new App(github, localStorage);
+
+        app.run();
+      }
+    </script>
+  </body>
+</html>
